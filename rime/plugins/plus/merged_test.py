@@ -2,6 +2,7 @@
 
 import fnmatch
 import os.path
+import hashlib
 
 from rime.basic import consts
 import rime.basic.targets.testset  # NOQA
@@ -19,8 +20,7 @@ class TestMerger(object):
         self.output_replace = output_replace
 
     def Run(self, testcases, merged_testcase, ui):
-        infiles = [os.path.splitext(t.infile)[0] + consts.IN_ORIGINAL_EXT
-                   for t in testcases]
+        infiles = self._GetInFiles(testcases, merged_testcase)
         difffiles = [os.path.splitext(infile)[0] + consts.DIFF_EXT
                      for infile in infiles]
         ui.console.PrintAction(
@@ -33,6 +33,10 @@ class TestMerger(object):
             'Generating %s' % os.path.basename(merged_testcase.difffile),
             progress=True)
         self._ConcatenateDiff(difffiles, merged_testcase.difffile)
+
+    def _GetInFiles(self, testcases, merged_testcase):
+        return [os.path.splitext(t.infile)[0] + consts.IN_ORIGINAL_EXT
+                for t in testcases]
 
     def _ConcatenateIn(self, srcs, dst):
         raise NotImplementedError()
@@ -52,12 +56,32 @@ class TestMerger(object):
 class ICPCMerger(TestMerger):
     PREFIX = 'icpc'
 
-    def __init__(self, input_terminator, output_replace=None):
+    def __init__(self, input_terminator, output_replace=None, shuffle=False, sample_pattern='0_*'):
         super(ICPCMerger, self).__init__(output_replace)
         self.input_terminator = input_terminator
+        self.shuffle = shuffle
+        self.sample_pattern = sample_pattern
         if self.input_terminator and not self.input_terminator.endswith('\n'):
             raise RuntimeError(
                 'icpc_merger(): input_terminator is not ending with \\n.')
+
+    def _GetInFiles(self, testcases, merged_testcase):
+        infiles = super(ICPCMerger, self)._GetInFiles(testcases, merged_testcase)
+        if self.shuffle:
+            samples = []
+            others = []
+            for srcpath in infiles:
+                if fnmatch.fnmatch(os.path.basename(srcpath), self.sample_pattern):
+                    samples.append(srcpath)
+                else:
+                    others.append(srcpath)
+            dstname = os.path.basename(merged_testcase.infile)
+            others.sort(
+                key=lambda srcpath: hashlib.sha1('{0};{1}'.format(os.path.basename(srcpath), dstname).encode('utf-8')).hexdigest()
+            )
+            return samples + others
+        else:
+            return infiles
 
     def _ConcatenateIn(self, srcs, dst):
         with open(dst, 'w') as f:
